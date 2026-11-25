@@ -1,0 +1,84 @@
+# Build and publish the Ladybird build-devcontainer image (aarch64) whenever
+# the recipe (.devcontainer/**) changes.
+#
+# The image is what "Reopen in Container" uses to build Ladybird *locally*.
+# Publishing it to GHCR means that when a stale-recipe check fires, a
+# known-good image can be pulled instead of rebuilt from scratch. This is the
+# GitHub half of the 3-layer rebuild-trigger system (see README.md).
+#
+# Runner: an ARM (aarch64) runner, so the published image is aarch64 (matching
+# the local dev machines). Adjust `runs-on` to the exact ARM label available in
+# your account/org (see README "CI").
+name: Build Dev Container Image
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.devcontainer/**'
+      - '.github/workflows/devcontainer.yml'
+  schedule:
+    # Weekly (Mon 00:00 UTC): re-verify the recipe against a clean image.
+    # https://crontab.guru/#0_0_*_*_1
+    - cron: '0 0 * * 1'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ladybird-build
+
+jobs:
+  build-and-publish:
+    # aarch64 runner - builds an arm64 image natively (no qemu emulation).
+    runs-on: ubuntu-24.04-arm64
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Compute recipe hash
+        id: recipe
+        run: |
+          set -euo pipefail
+          HASH="$(bash .devcontainer/scripts/hash-recipe.sh .devcontainer)"
+          echo "hash=${HASH}" >> "$GITHUB_OUTPUT"
+          echo "recipe hash: ${HASH}"
+
+      # Build exactly what scripts/build-image.sh builds locally (same context,
+      # same Dockerfile), tagged `latest` and by recipe hash so a specific
+      # recipe revision can be pinned.
+      - name: Build image
+        run: |
+          set -euo pipefail
+          docker build \
+            -f .devcontainer/Dockerfile \
+            -t "${IMAGE_NAME}:latest" \
+            -t "${IMAGE_NAME}:sha-${{ steps.recipe.outputs.hash }}" \
+            --label ladybird-build=1 \
+            .devcontainer
+
+      # Smoke test: the freshly built image must bake the same recipe hash the
+      # workflow just computed (catches the build diverging from the recipe).
+      - name: Verify baked recipe hash (check-fresh --strict)
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}":/workspace/ladybird-build \
+            -w /workspace/ladybird-build \
+            "${IMAGE_NAME}:latest" \
+            bash .devcontainer/scripts/check-fresh.sh --strict
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550  # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        run: |
+          set -euo pipefail
+          docker push "${IMAGE_NAME}:latest"
+          docker push "${IMAGE_NAME}:sha-${{ steps.recipe.outputs.hash }}"

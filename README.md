@@ -25,6 +25,7 @@ lives in the `ladybird/` git submodule (pinned commit).
   .recipe-hash            committed recipe hash (auto-maintained by pre-commit hook)
 .githooks/                git hooks (core.hooksPath, see scripts/install-hooks.sh)
 scripts/                  host-side helpers (build-image.sh, install-hooks.sh)
+.github/workflows/        CI: build Ladybird on arm64 + publish dev image to GHCR
 ladybird/                 submodule -> LadybirdBrowser/ladybird (pinned)
 ```
 
@@ -86,6 +87,25 @@ git -C ladybird fetch origin master
 git -C ladybird checkout master
 git add ladybird && git commit -m "bump ladybird to $(git -C ladybird rev-parse --short HEAD)"
 ```
+
+## CI (GitHub Actions)
+
+Two workflows in `.github/workflows/`:
+
+- **`build-ladybird.yml`** — builds Ladybird **directly on an arm64 runner**
+  (no container: the dev image exists to isolate the *local* machine, so on a
+  clean runner we just install the same toolchain and run the build). Uploads
+  the `Ladybird` binary as an artifact. Runs on push to `main`, on PRs, and on
+  manual dispatch.
+- **`devcontainer.yml`** — builds the **arm64 dev image** and pushes it to GHCR
+  (`ghcr.io/<owner>/ladybird-build`, tags `latest` + `sha-<recipe-hash>`). Runs
+  on pushes touching `.devcontainer/**`, weekly, and on manual dispatch.
+
+Both target an **ARM (aarch64) runner** — `runs-on: ubuntu-24.04-arm64` — since
+the local machines are arm64 and the public GitHub pool is x86_64. If your ARM
+runner label differs, change `runs-on:` in both files. `build-ladybird.yml`
+caches the vcpkg binary cache + ccache between runs; the first (cold) build is
+slow because Qt 6.11 is compiled from source.
 
 ## Resources
 

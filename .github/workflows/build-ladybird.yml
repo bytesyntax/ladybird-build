@@ -1,0 +1,99 @@
+# Build the Ladybird browser directly on an arm64 (aarch64) runner.
+#
+# No container is used here: containerization in this repo exists to isolate
+# the *local* dev machine (see HANDOFF.md, S2). On a clean runner we just
+# install the same toolchain the dev image bakes in (reusing the recipe's
+# installer scripts) and run the same build script. The result (the `Ladybird`
+# binary) is uploaded as an artifact.
+#
+# Runner: an ARM (aarch64) ubuntu runner. GitHub's public pool is x86_64, so
+# this targets the `-arm` runner variant; adjust `runs-on` to the exact ARM
+# label available in your account/org (see README "CI").
+name: Build Ladybird
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Parallelism / memory guards (GH runners: ~4 cores / 16G). build-ladybird.sh
+  # reads these from the environment.
+  LB_JOBS: 4
+  LAGOM_LINK_POOL_SIZE: 2
+  VCPKG_MAX_CONCURRENCY: 2
+  # ccache store (setup_ccache.cmake enables ccache when it is on PATH).
+  CCACHE_DIR: $HOME/.ccache
+
+jobs:
+  build:
+    # aarch64 runner - produces an arm64 Ladybird binary.
+    runs-on: ubuntu-24.04-arm64
+    timeout-minutes: 600
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          submodules: recursive
+
+      # Base build dependencies + toolchain prerequisites. Mirrors the apt
+      # layer of .devcontainer/Dockerfile so the toolchain matches the image.
+      - name: Install system dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            autoconf autoconf-archive automake build-essential ccache curl \
+            ca-certificates fonts-liberation2 glslang-tools gpg git \
+            libdrm-dev libgl1-mesa-dev libncurses-dev libpulse-dev libtool \
+            libwayland-dev libxcb-icccm4-dev lsb-release nasm ninja-build \
+            pkg-config python3 python3-venv shellcheck tar unzip zip wget
+
+      # CMake >= 3.30 (noble ships 3.28) and clang >= 19 (Ladybird CI uses 22).
+      # These are the same installers the dev image uses; run as root.
+      - name: Install CMake >= 3.30
+        run: sudo bash .devcontainer/scripts/install-cmake.sh
+
+      - name: Install clang (clang-22)
+        run: sudo bash .devcontainer/scripts/install-compiler.sh 22
+
+      # Rust: rustup + a default toolchain. Ladybird pins its exact toolchain
+      # via rust-toolchain.toml, which rustup fetches on the first cargo run.
+      - name: Install Rust (rustup)
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "${HOME}/.cargo/bin" >> "$GITHUB_PATH"
+
+      # Reuse the vcpkg binary cache across runs (the long pole: Qt6 6.11 is
+      # built from source on first build) and the ccache store. Keyed on the
+      # vcpkg manifest + arch, so a bumped manifest misses (and rebuilds) while
+      # a Ladybird bump that keeps vcpkg.json stable still reuses it. A failed
+      # run does not overwrite the cache (actions/cache skips save on failure).
+      - name: Cache vcpkg binary cache + ccache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            ladybird/Build/caches/vcpkg-binary-cache
+            ~/.ccache
+          key: lb-ci-${{ runner.arch }}-vcpkg-${{ hashFiles('ladybird/vcpkg.json') }}
+
+      - name: Build Ladybird (configure + ninja, Release)
+        run: |
+          set -euo pipefail
+          bash .devcontainer/scripts/build-ladybird.sh
+
+      - name: Verify binary
+        run: ls -lh ladybird/Build/release/bin/Ladybird
+
+      - name: Upload Ladybird binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: ladybird-Linux-${{ runner.arch }}
+          path: ladybird/Build/release/bin/Ladybird
+          if-no-files-found: error

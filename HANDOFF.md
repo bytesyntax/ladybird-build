@@ -20,8 +20,8 @@ Create a repository that can build the Ladybird browser
 |---------|-------|--------|
 | S0 | research, repo scaffold, container recipe + triggers, docs | **DONE** |
 | S1a | container image builds + verified (`ladybird-build:local`) | **DONE** |
-| S1b | build Ladybird inside the container | **TODO** |
-| S2 | `.github/workflows/` (devcontainer rebuild-on-change + CI build), README CI section | **TODO** |
+| S1b | build Ladybird inside the container | **SKIPPED** - host RAM too low; CI is the build path (see "S1b outcome") |
+| S2 | `.github/workflows/` (devcontainer publish + CI build), README CI section | **DONE (written + validated)** - needs push + arm64 runner to go green |
 
 ## S0 - what was done (committed)
 
@@ -121,6 +121,22 @@ If the local build cannot finish for resource reasons, that is an acceptable
 outcome for S1 - record WHERE it got stuck in this file and let S2's CI build
 be the verified build path. Do NOT claim success without a binary.
 
+### S1b outcome (2026-11-25): SKIPPED -> CI is the verified build path
+
+The in-container build was **not** started, for two independent reasons:
+1. **Host RAM too low.** ~824M free (7.3G total, mostly used by other
+   processes), 4G/8G swap already in use. The vcpkg phase compiles Qt 6.11 from
+   source and would have OOM/swap-thrashed the box.
+2. **Latent recipe bug found while prepping** (would have blocked it regardless):
+   `/var/lib/ladybird-cache` is created `root:root` mode `755` by the Dockerfile,
+   but the container runs as `vscode` (uid 1000). Verified: `touch` as uid 1000
+   -> `Permission denied`, so `bootstrap.sh`/vcpkg can't write the binary cache.
+   CI is unaffected (`devcontainer.yml` builds the image as root;
+   `build-ladybird.yml` uses no container). Fix for future local builds: `chown`
+   the cache dir to the build user in the Dockerfile (or mount it writable) -
+   this changes the recipe hash, so also rebuild `ladybird-build:local` +
+   refresh `.recipe-hash`.
+
 ## S2 - GitHub workflows
 
 Create (repo currently has none):
@@ -150,21 +166,29 @@ Create (repo currently has none):
 ## Resuming (copy-paste prompt for a new session)
 
 > Continue the ladybird-build project in /home/olto/repos/ladybird-build.
-> First read HANDOFF.md and continue from its "S1b" (or "S2") section.
-> Current goal: [build Ladybird inside the container:
-> run `bash .devcontainer/scripts/bootstrap.sh` then
-> `bash .devcontainer/scripts/build-ladybird.sh` (image `ladybird-build:local`
-> is ready; prefer VS Code "Reopen in Container" so postCreate runs) |
-> create the GitHub workflows per HANDOFF.md S2]. Keep the recipe-hash
-> rebuild triggers working after any .devcontainer change.
+> First read HANDOFF.md. S0/S1a done; S2 (workflows) written + validated.
+> Current goal: push to GitHub (origin=bytesyntax/ladybird-build) and get the
+> two `.github/workflows/*.yml` green on an arm64 runner
+> (`runs-on: ubuntu-24.04-arm64`). If your ARM runner label differs, fix
+> `runs-on:` in both workflows. `build-ladybird.yml` builds Ladybird directly
+> (no container) and caches vcpkg+ccache (key: `ladybird/vcpkg.json`);
+> `devcontainer.yml` publishes the arm64 image to GHCR. If a LOCAL
+> in-container build is ever wanted, first fix the /var/lib/ladybird-cache
+> ownership bug (see "S1b outcome"). Keep the recipe-hash rebuild triggers
+> working after any .devcontainer change.
 
 ## Definition of done (whole project)
 
 - [x] Recipe + triggers + VS Code auto-load config (S0)
 - [x] `scripts/build-image.sh` succeeds on this host (S1a) - verified toolchain
-- [ ] `ladybird/Build/release/bin/Ladybird` built in-container (S1b)
-- [ ] `.github/workflows/devcontainer.yml` + `build-ladybird.yml` green (S2)
-- [ ] README/HANDOFF updated to final state
+- [~] `ladybird/Build/release/bin/Ladybird` built (S1b) - local in-container
+      SKIPPED (RAM + cache-perm bug); the verified build is CI
+      (`build-ladybird.yml`)
+- [x] `.github/workflows/devcontainer.yml` + `build-ladybird.yml` written +
+      validated (S2) - actions pinned to commit SHAs (renovate style)
+- [ ] `.github/workflows/` **green** - needs a push to GitHub + an arm64 runner
+      (`runs-on: ubuntu-24.04-arm64`) available to the repo
+- [x] README CI section + HANDOFF updated to this state
 
 ## Log
 
@@ -173,3 +197,19 @@ Create (repo currently has none):
   clang-22.1.8 / cmake 4.5.0 / ninja / nasm / rustc, baked recipe hash
   d567f1e0 == host .recipe-hash. Next: S1b (build Ladybird in-container),
   then S2 (workflows).
+- S2 (2026-11-25): S1b skipped (host ~824M RAM free + /var/lib/ladybird-cache
+  root:755-vs-uid1000 perm bug - see "S1b outcome"). Wrote:
+  - `.github/workflows/build-ladybird.yml`: arm64 runner, NO container, reuses
+    install-cmake.sh / install-compiler.sh / build-ladybird.sh, caches
+    vcpkg-binary-cache + ccache (key on `ladybird/vcpkg.json`), uploads the
+    `Ladybird` binary.
+  - `.github/workflows/devcontainer.yml`: builds the arm64 image, runs
+    `check-fresh.sh --strict` smoke test, pushes to GHCR (`latest` +
+    `sha-<recipe-hash>`).
+  Actions pinned to latest full-version commit SHAs (renovate style, each
+  verified to exist): checkout v7.0.1, login-action v4.8.0, cache v6.1.0,
+  upload-artifact v7.0.2. Both workflows YAML-validated. Added README "CI"
+  section. Remote added: origin=github.com/bytesyntax/ladybird-build.
+  NEXT: push to main; ensure an arm64 runner labeled `ubuntu-24.04-arm64` is
+  available to the repo; watch the first (cold vcpkg-cache) build; if the ARM
+  runner label differs, adjust `runs-on:` in both workflows.
