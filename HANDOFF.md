@@ -19,7 +19,8 @@ Create a repository that can build the Ladybird browser
 | Session | Scope | Status |
 |---------|-------|--------|
 | S0 | research, repo scaffold, container recipe + triggers, docs | **DONE** |
-| S1 | verify/fix container image build, then build Ladybird inside it | **TODO** |
+| S1a | container image builds + verified (`ladybird-build:local`) | **DONE** |
+| S1b | build Ladybird inside the container | **TODO** |
 | S2 | `.github/workflows/` (devcontainer rebuild-on-change + CI build), README CI section | **TODO** |
 
 ## S0 - what was done (committed)
@@ -52,11 +53,10 @@ Create a repository that can build the Ladybird browser
   on the same volume). VS Code Dev Containers works with podman.
 - Network egress: github.com (raw/api/releases), apt.kitware.com,
   static.rust-lang.org, sh.rustup.rs all reachable.
-  **apt.llvm.org content fetches appeared broken from this egress**
-  (http->https 301 redirect to a 404; directory listings served). The
-  install-compiler.sh chain handles this: apt.llvm.org (22->19) then
-  **build LLVM from source** (needs ~15-25 min + disk on this box).
-  If you find a working mirror, add it before strategy 3.
+  apt.llvm.org **works from inside the podman build network** (S0's build
+  pulled llvm-toolchain-noble-22 arm64 fine) even though plain `curl` from
+  the host egress got 301->404s on content paths - trust the container
+  build, not host curl, when judging that mirror.
 - Ladybird facts: no submodules of its own; vcpkg manifest mode clones vcpkg
   into `ladybird/Build/vcpkg-release` at configure time; **Linux builds Qt 6.11.3
   from source via vcpkg** (feature `qt`), plus skia/ffmpeg/openssl etc.
@@ -65,38 +65,25 @@ Create a repository that can build the Ladybird browser
 
 ## S1 - verify the container image, then build Ladybird
 
-### 1. Container image
+### 1. Container image - DONE (verified)
 
-An initial `podman build` was started at the end of S0
-(log: `logs/devcontainer-build.log`; image tag `ladybird-build:local`).
+`scripts/build-image.sh` succeeded end-to-end on this host (log:
+`logs/devcontainer-build.log`), tag `ladybird-build:local`. Verified inside:
+baked hash `d567f1e0...` == host `.recipe-hash`, **clang-22.1.8** /
+**clang++-22** (recorded in `/opt/ladybird-build/toolchain.env`), cmake 4.5.0,
+ninja 1.11.1, nasm 2.16.01, rustc 1.100.0 (stable; ladybird's own pinned
+toolchain downloads on first cargo run), git 2.56.1. apt.llvm.org worked
+inside the build network (fast path taken, no source-LLVM fallback needed).
 
-```bash
-podman images | grep ladybird-build          # did it land?
-tail -n 50 logs/devcontainer-build.log       # where did it stop?
-```
-
-If it failed, iterate on the recipe (fix script, `bash scripts/build-image.sh`,
-repeat). Likely failure points, in order of probability:
+If the recipe changes later and `scripts/build-image.sh` fails, iterate:
+fix script -> rebuild. Likely failure points:
 1. `mcr.microsoft.com` unreachable -> change `FROM` to `ubuntu:24.04` and add
    `git`, `lsb-release`, `ca-certificates`, `gnupg`, user `vscode` (uid 1000,
-   in `adm,dialout,docker?` groups - copy from the devcontainers base image:
-   `useradd -m -u 1000 -g vscode -s /bin/bash vscode`).
-2. apt.llvm.org broken (see above) - the script should fall through to the
-   source build; if the source build itself fails (disk/RAM), consider
-   building LLVM with `-DLLVM_ENABLE_ASSERTIONS=OFF` and `ninja -j4` (edit
-   install-compiler.sh strategy 3 accordingly).
+   in `adm,dialout` groups: `useradd -m -u 1000 -g vscode -s /bin/bash vscode`).
+2. apt.llvm.org broken -> the script falls through to the LLVM-from-source
+   build (slower; edit install-compiler.sh strategy 3 for memory if needed).
 3. Anything else: read the log, fix, rebuild. **Every Dockerfile/script edit
    changes the recipe hash - that is intended; the triggers exist for this.**
-
-When the image builds:
-
-```bash
-podman run --rm ladybird-build:local bash -c '
-  cat /opt/ladybird-build/recipe.sha256
-  . /opt/ladybird-build/toolchain.env; echo $CC; $CC --version
-  cmake --version | head -1; ninja --version; nasm --version; rustc --version'
-```
-Expect: hash printed, a clang >= 19, cmake >= 3.30.
 
 ### 2. Build Ladybird inside the container
 
@@ -163,24 +150,26 @@ Create (repo currently has none):
 ## Resuming (copy-paste prompt for a new session)
 
 > Continue the ladybird-build project in /home/olto/repos/ladybird-build.
-> First read HANDOFF.md and continue from its "S1" (or "S2") section.
-> Current goal: [verify the podman image build (logs/devcontainer-build.log)
-> and fix the recipe until `scripts/build-image.sh` succeeds | build Ladybird
-> inside the container with .devcontainer/scripts/build-ladybird.sh |
+> First read HANDOFF.md and continue from its "S1b" (or "S2") section.
+> Current goal: [build Ladybird inside the container:
+> run `bash .devcontainer/scripts/bootstrap.sh` then
+> `bash .devcontainer/scripts/build-ladybird.sh` (image `ladybird-build:local`
+> is ready; prefer VS Code "Reopen in Container" so postCreate runs) |
 > create the GitHub workflows per HANDOFF.md S2]. Keep the recipe-hash
 > rebuild triggers working after any .devcontainer change.
 
 ## Definition of done (whole project)
 
 - [x] Recipe + triggers + VS Code auto-load config (S0)
-- [ ] `scripts/build-image.sh` succeeds on this host (S1)
-- [ ] `ladybird/Build/release/bin/Ladybird` built in-container (S1)
+- [x] `scripts/build-image.sh` succeeds on this host (S1a) - verified toolchain
+- [ ] `ladybird/Build/release/bin/Ladybird` built in-container (S1b)
 - [ ] `.github/workflows/devcontainer.yml` + `build-ladybird.yml` green (S2)
 - [ ] README/HANDOFF updated to final state
 
 ## Log
 
 - S0 (2026-11-25): repo scaffolded, recipe + 3-layer rebuild triggers written,
-  submodule pinned @79075e6, initial `podman build` started in background
-  (logs/devcontainer-build.log). apt.llvm.org content unreachable from this
-  egress; compiler falls back to LLVM-from-source.
+  submodule pinned @79075e6, `podman build` completed + verified:
+  clang-22.1.8 / cmake 4.5.0 / ninja / nasm / rustc, baked recipe hash
+  d567f1e0 == host .recipe-hash. Next: S1b (build Ladybird in-container),
+  then S2 (workflows).
