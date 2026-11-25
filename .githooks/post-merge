@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# After merges (and post-checkout for other branches), remind that a recipe
+# change may require a container rebuild. Never blocks.
+cd "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || exit 0
+if [[ -f .devcontainer/scripts/rebuild-if-stale.sh ]]; then
+    bash .devcontainer/scripts/rebuild-if-stale.sh --quiet || true
+fi
+exit 0

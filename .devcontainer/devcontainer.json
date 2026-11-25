@@ -1,0 +1,65 @@
+// Ladybird build environment (see README.md and HANDOFF.md).
+//
+// VS Code picks this file up automatically when the folder is opened
+// ("Reopen in Container"); after the first manual choice it re-opens in this
+// container automatically.
+//
+// Rebuild triggers for this container (hash-based drift detection):
+//   1. postCreateCommand / postStartCommand below run check-fresh.sh, which
+//      compares the live recipe hash against /opt/ladybird-build/recipe.sha256
+//      baked into the image.
+//   2. git hooks (.githooks/) run rebuild-if-stale.sh after checkout/merge.
+//   3. the GitHub devcontainer workflow rebuilds+publishes the image when
+//      .devcontainer/** changes.
+{
+    "name": "Ladybird Build",
+    "build": {
+        "context": ".",
+        "dockerfile": "Dockerfile"
+    },
+    "workspaceMount": "/workspace/ladybird-build=/workspace/ladybird-build",
+    "workspaceFolder": "/workspace/ladybird-build",
+    "remoteUser": "vscode",
+    // Persistent named volume: the vcpkg binary cache + ccache survive
+    // container rebuilds, so a stale-recipe rebuild is cheap.
+    "mounts": [
+        "source=ladybird-build-cache,target=/var/lib/ladybird-cache,type=volume"
+    ],
+    "containerEnv": {
+        "LADYBIRD_CACHE_DIR": "/var/lib/ladybird-cache",
+        "CCACHE_DIR": "/var/lib/ladybird-cache/ccache",
+        // Memory guards for small machines (this box: 7G RAM + 8G swap):
+        // bound parallel link steps, compile jobs and vcpkg concurrency.
+        "LAGOM_LINK_POOL_SIZE": "2",
+        "LB_JOBS": "3",
+        "VCPKG_MAX_CONCURRENCY": "2"
+    },
+    // Runs once, after container creation: fetch the ladybird submodule and
+    // verify the toolchain.
+    "postCreateCommand": "bash .devcontainer/scripts/bootstrap.sh",
+    // Runs on EVERY container start (including already-existing containers):
+    // warns when the recipe drifted from the image build.
+    "postStartCommand": "bash .devcontainer/scripts/check-fresh.sh || true",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cmake-tools",
+                "llvm-vs-code-extensions.vscode-clangd",
+                "eamodio.gitlens"
+            ],
+            "settings": {
+                "files.exclude": {
+                    "**/.git": true,
+                    "ladybird/Build/**": true
+                },
+                "search.exclude": {
+                    "**/.git": true,
+                    "ladybird/Build/**": true
+                },
+                "editor.tabSize": 4,
+                "files.insertFinalNewline": true,
+                "files.trimFinalNewlines": true
+            }
+        }
+    }
+}

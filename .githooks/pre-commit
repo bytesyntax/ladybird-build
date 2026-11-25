@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Keep the committed recipe hash in sync: any commit that changes the
+# container recipe also updates .devcontainer/.recipe-hash, so "recipe
+# changed" is detectable in git history and by the CI paths filter.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+bash .devcontainer/scripts/hash-recipe.sh .devcontainer > .devcontainer/.recipe-hash.tmp
+if [[ ! -f .devcontainer/.recipe-hash ]] \
+   || ! cmp -s .devcontainer/.recipe-hash .devcontainer/.recipe-hash.tmp; then
+    mv .devcontainer/.recipe-hash.tmp .devcontainer/.recipe-hash
+    git add .devcontainer/.recipe-hash
+    echo "pre-commit: updated .devcontainer/.recipe-hash - the container must be rebuilt (see README.md)"
+else
+    rm -f .devcontainer/.recipe-hash.tmp
+fi
