@@ -255,3 +255,16 @@ Create (repo currently has none):
   VCPKG_MAX_CONCURRENCY=2), then qtsvg; then Ladybird's own `ninja -j3`
   (~1-2h). If OOM/swap-thrashing, lower VCPKG_MAX_CONCURRENCY=1 / LB_JOBS=2
   and re-run the same command (ninja+vcpkg are incremental).
+- S1b vcpkg done, Ladybird compile hit rustup perms (2026-11-26): the X11
+  fix worked - qtbase + qtsvg + all other ports installed, ladybird cmake
+  configure OK, `ninja -j3` started. First failure: the `LICENSES.txt` target
+  (Meta/generate-licenses.py shells out to `cargo metadata`) died with
+  `could not create temp file /usr/local/rustup/tmp/...: Permission denied` -
+  the Dockerfile installed rustup/cargo as root (`/usr/local/rustup`,
+  `/usr/local/cargo` root:755) but the container runs as vscode (uid 1000),
+  and ladybird's rust-toolchain.toml makes rustup DOWNLOAD+WRITE its pinned
+  1.98.0 toolchain on the first cargo run. Same bug class as the old
+  /var/lib/ladybird-cache root:755 issue. Fix: `chown -R 1000:1000
+  /usr/local/rustup /usr/local/cargo` (applied to the running container +
+  added to the Dockerfile after the rustup RUN). Build resumed with a direct
+  `ninja -C ladybird/Build/release -j3` (skips the ~11.5-min reconfigure).

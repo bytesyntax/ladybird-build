@@ -49,6 +49,11 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --profile minimal --default-toolchain stable
 
+# The container runs as vscode (uid 1000), but rustup installed as root:
+# ladybird's rust-toolchain.toml makes rustup download+write its pinned
+# toolchain on the first cargo run, so both dirs must be user-writable.
+RUN chown -R 1000:1000 /usr/local/rustup /usr/local/cargo
+
 # --- Cache directories ----------------------------------------------------------
 # /var/lib/ladybird-cache is mounted as a persistent devcontainer volume (see
 # devcontainer.json) and holds the vcpkg binary cache + ccache, so container
