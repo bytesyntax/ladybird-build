@@ -210,6 +210,48 @@ Create (repo currently has none):
   verified to exist): checkout v7.0.1, login-action v4.8.0, cache v6.1.0,
   upload-artifact v7.0.2. Both workflows YAML-validated. Added README "CI"
   section. Remote added: origin=github.com/bytesyntax/ladybird-build.
-  NEXT: push to main; ensure an arm64 runner labeled `ubuntu-24.04-arm64` is
-  available to the repo; watch the first (cold vcpkg-cache) build; if the ARM
-  runner label differs, adjust `runs-on:` in both workflows.
+   NEXT: push to main; ensure an arm64 runner labeled `ubuntu-24.04-arm64` is
+   available to the repo; watch the first (cold vcpkg-cache) build; if the ARM
+   runner label differs, adjust `runs-on:` in both workflows.
+- S1b resume (2026-11-26): local in-container build unblocked. Root cause of the
+  first `build-ladybird.sh` failure: ladybird's CMake toolchain requires a
+  vcpkg checkout at `ladybird/Build/vcpkg-release` (pinned to `vcpkg.json`
+  `builtin-baseline`), but nothing created it, so `cmake --preset Release`
+  died with "Could not find toolchain file" (the follow-up "unable to find a
+  build program ... Ninja" line is a red herring cascading from the same
+  error). Also found `Meta/ladybird.py vcpkg`'s worktree detection
+  (`find_main_ladybird_source_dir`) misreads ladybird's *submodule* `.git`
+  pointer (a file, not a dir) and clones to the wrong place + a relative-path
+  `FileNotFoundError`. Fix (in `.devcontainer/scripts/build-ladybird.sh`):
+  clone `microsoft/vcpkg` directly to `ladybird/Build/vcpkg-release` @ the
+  manifest baseline and bootstrap it when missing; set
+  `VCPKG_FORCE_SYSTEM_BINARIES=1` on aarch64/riscv64 (mirrors ladybird.py).
+  Also: fixed `prune` globs to `Build/vcpkg-*/...`, auto-`prune` after
+  configure, and `chown`-ed `/var/lib/ladybird-cache` to `vscode`.
+- S1b qtbase failure (2026-11-26): vcpkg got through ~70 ports (ffmpeg, skia,
+  angle, openssl, icu ... all installed) and died on **qtbase at its own CMake
+  configure** (~23s in). Real error (from
+  `buildtrees/qtbase/config-arm64-linux-dynamic-out.log`): Qt features
+  `xcb`, `xcb_xlib`, `xkbcommon`, `xkbcommon_x11`, `xlib`, `system_xcb_xinput`
+  are force-ON (`-DFEATURE_*`) but their find/compile probes failed
+  (`TEST_xcb_syslibs`, `X11_XCB_FOUND`, `XKB_FOUND`, `XKB_COMMON_X11_FOUND`,
+  `XCB_XINPUT_FOUND` all FALSE). Why: Ladybird's `qt` manifest feature
+  requests qtbase `xcb` + `xcb-xlib`; the vcpkg port's `xcb` feature
+  recursively depends on `xlib` + `xkbcommon-x11` + `xkb`; on Linux the port
+  force-enables all of them and **expects the X11 dev libs from the system
+  package manager** (it prints the apt list as a warning; vcpkg cannot provide
+  them). Our image/CI apt list never had them. Fix (applied to running
+  container + `.devcontainer/Dockerfile` + `.github/workflows/build-ladybird.yml`):
+  `libxcb*-dev libx11-xcb-dev libegl1-mesa-dev libglu1-mesa-dev libxi-dev
+  libxkbcommon-dev libxkbcommon-x11-dev libxrender-dev`.
+  **NOTE:** the Dockerfile change changed the recipe hash - the running
+  container got the packages via `sudo apt-get` directly, so it is AHEAD of
+  the baked image; when back on the host, re-run `scripts/build-image.sh`
+  (tag `ladybird-build:local`) so the image matches the recipe again
+  (`check-fresh.sh` will flag it stale until then).
+- S1b build resumed (2026-11-26): `build-ladybird.sh` re-running in-container
+  (tracked background process, log `logs/build-2026-11-26.log`). Remaining
+  vcpkg work: qtbase (Qt 6.11.3 from source - the long pole, ~1-2h+ at
+  VCPKG_MAX_CONCURRENCY=2), then qtsvg; then Ladybird's own `ninja -j3`
+  (~1-2h). If OOM/swap-thrashing, lower VCPKG_MAX_CONCURRENCY=1 / LB_JOBS=2
+  and re-run the same command (ninja+vcpkg are incremental).

@@ -17,7 +17,7 @@
         "context": ".",
         "dockerfile": "Dockerfile"
     },
-    "workspaceMount": "/workspace/ladybird-build=/workspace/ladybird-build",
+    "workspaceMount": "type=bind,source=${localWorkspaceFolder},target=/workspace/ladybird-build",
     "workspaceFolder": "/workspace/ladybird-build",
     "remoteUser": "vscode",
     // Persistent named volume: the vcpkg binary cache + ccache survive

@@ -19,10 +19,17 @@ ENV DEBIAN_FRONTEND=noninteractive
 # --- Base build tools ---------------------------------------------------------
 # From Ladybird's Documentation/BuildInstructionsLadybird.md (Debian/Ubuntu
 # list) plus the extras from the upstream .devcontainer feature.
+#
+# The X11 dev set (libxcb*-dev & friends) is required by vcpkg's qtbase port:
+# on Linux it force-enables the xcb/xlib/xkb Qt features and expects these
+# libraries to come from the system package manager (it prints exactly this
+# list as a warning). Without them qtbase dies at its own CMake configure.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         autoconf autoconf-archive automake build-essential ccache curl \
         fonts-liberation2 glslang-tools gpg git libdrm-dev libgl1-mesa-dev \
-        libncurses-dev libpulse-dev libtool libwayland-dev libxcb-icccm4-dev \
+        libncurses-dev libpulse-dev libtool libwayland-dev 'libxcb*-dev' \
+        libx11-xcb-dev libegl1-mesa-dev libglu1-mesa-dev libxi-dev \
+        libxkbcommon-dev libxkbcommon-x11-dev libxrender-dev \
         lsb-release nasm ninja-build pkg-config python3 python3-venv \
         shellcheck tar unzip zip wget \
     && rm -rf /var/lib/apt/lists/*

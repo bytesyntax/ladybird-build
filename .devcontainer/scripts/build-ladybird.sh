@@ -22,10 +22,10 @@ case "${1:-build}" in
         exit 0
         ;;
     prune)
-        rm -rf "$SRC"/Build/*/vcpkg/buildtrees \
-               "$SRC"/Build/*/vcpkg/packages \
-               "$SRC"/Build/*/vcpkg/downloads \
-               "$SRC"/Build/*/vcpkg/trees
+        rm -rf "$SRC"/Build/vcpkg-*/buildtrees \
+               "$SRC"/Build/vcpkg-*/packages \
+               "$SRC"/Build/vcpkg-*/downloads \
+               "$SRC"/Build/vcpkg-*/trees
         df -h "$SRC" | tail -n1
         exit 0
         ;;
@@ -77,13 +77,44 @@ echo "== jobs:      $JOBS (link pool: $LAGOM_LINK_POOL_SIZE, vcpkg concurrency: 
 echo "== disk:"
 df -h "$SRC" | tail -n1
 
+# vcpkg: ladybird's CMake toolchain expects a vcpkg checkout at
+# Build/vcpkg-release, pinned to the baseline in vcpkg.json. The actual
+# `vcpkg install` runs during the cmake configure below.
+# Note: we don't use 'Meta/ladybird.py vcpkg' here - its worktree detection
+# (Meta/ladybird.py find_main_ladybird_source_dir) misreads ladybird's
+# submodule .git pointer and clones to the wrong place.
+VCPKG_DIR="$SRC/Build/vcpkg-release"
+VCPKG_BASELINE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["builtin-baseline"])' "$SRC/vcpkg.json")"
+if [[ ! -f "$VCPKG_DIR/scripts/buildsystems/vcpkg.cmake" ]]; then
+    echo
+    echo "== vcpkg checkout missing; cloning microsoft/vcpkg @ ${VCPKG_BASELINE:0:12} =="
+    git clone https://github.com/microsoft/vcpkg.git "$VCPKG_DIR" \
+        && git -C "$VCPKG_DIR" checkout "$VCPKG_BASELINE" \
+        && bash "$VCPKG_DIR/bootstrap-vcpkg.sh" -disableMetrics \
+        || { echo "vcpkg setup FAILED" >&2; exit 1; }
+fi
+
+# vcpkg refuses to build ports on arm64/riscv64 Linux with its bundled tool
+# binaries; make it use the system cmake+ninja (mirrors Meta/ladybird.py).
+case "$(uname -m)" in
+    aarch64|riscv64) export VCPKG_FORCE_SYSTEM_BINARIES=1 ;;
+esac
+
 echo
 echo "== configure (Release preset) =="
+# Linux GUI builds: build+bundle Qt via vcpkg (default OFF; matches upstream CI)
 cmake --preset Release \
     -S "$SRC" \
     -DCMAKE_C_COMPILER="$CC_BIN" \
     -DCMAKE_CXX_COMPILER="$CXX_BIN" \
+    -DLADYBIRD_BUILD_QT=ON \
     || { echo "configure FAILED" >&2; exit 1; }
+
+# vcpkg install ran during configure and left multi-GB intermediates behind;
+# drop them (binary cache + installed/ trees are kept) to make room for the
+# browser build on this tight volume.
+echo
+bash "$0" prune
 
 echo
 echo "== build (ninja -j$JOBS) =="
