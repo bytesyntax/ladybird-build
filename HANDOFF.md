@@ -168,9 +168,9 @@ Create (repo currently has none):
 > Continue the ladybird-build project in /home/olto/repos/ladybird-build.
 > First read HANDOFF.md. S0/S1a done; S2 (workflows) written + validated.
 > Current goal: push to GitHub (origin=bytesyntax/ladybird-build) and get the
-> two `.github/workflows/*.yml` green on an arm64 runner
-> (`runs-on: ubuntu-24.04-arm64`). If your ARM runner label differs, fix
-> `runs-on:` in both workflows. `build-ladybird.yml` builds Ladybird directly
+> two `.github/workflows/*.yml` green on a GitHub-hosted ARM64 runner
+> (`runs-on: ubuntu-24.04-arm` — note `-arm`, not `-arm64`).
+> `build-ladybird.yml` builds Ladybird directly
 > (no container) and caches vcpkg+ccache (key: `ladybird/vcpkg.json`);
 > `devcontainer.yml` publishes the arm64 image to GHCR. If a LOCAL
 > in-container build is ever wanted, first fix the /var/lib/ladybird-cache
@@ -186,8 +186,11 @@ Create (repo currently has none):
       (`build-ladybird.yml`)
 - [x] `.github/workflows/devcontainer.yml` + `build-ladybird.yml` written +
       validated (S2) - actions pinned to commit SHAs (renovate style)
-- [ ] `.github/workflows/` **green** - needs a push to GitHub + an arm64 runner
-      (`runs-on: ubuntu-24.04-arm64`) available to the repo
+- [ ] `.github/workflows/` **green** - needs a push to GitHub; targets the
+      GitHub-hosted ARM64 runner (`runs-on: ubuntu-24.04-arm`)
+- [x] On-demand versioning (S3): `workflow_dispatch` can build any Ladybird
+      ref; `bump-ladybird.yml` moves the pin only on request; README
+      "Licensing & distribution" written
 - [x] README CI section + HANDOFF updated to this state
 
 ## Log
@@ -210,9 +213,10 @@ Create (repo currently has none):
   verified to exist): checkout v7.0.1, login-action v4.8.0, cache v6.1.0,
   upload-artifact v7.0.2. Both workflows YAML-validated. Added README "CI"
   section. Remote added: origin=github.com/bytesyntax/ladybird-build.
-   NEXT: push to main; ensure an arm64 runner labeled `ubuntu-24.04-arm64` is
-   available to the repo; watch the first (cold vcpkg-cache) build; if the ARM
-   runner label differs, adjust `runs-on:` in both workflows.
+   NEXT: push to main; the workflows target the GitHub-hosted ARM64 runner
+   `ubuntu-24.04-arm` (note `-arm`, not `-arm64` — the old label matched no
+   runner, so jobs queued forever "waiting to be picked up"); watch the first
+   (cold vcpkg-cache) build.
 - S1b resume (2026-11-26): local in-container build unblocked. Root cause of the
   first `build-ladybird.sh` failure: ladybird's CMake toolchain requires a
   vcpkg checkout at `ladybird/Build/vcpkg-release` (pinned to `vcpkg.json`
@@ -268,3 +272,27 @@ Create (repo currently has none):
   /usr/local/rustup /usr/local/cargo` (applied to the running container +
   added to the Dockerfile after the rustup RUN). Build resumed with a direct
   `ninja -C ladybird/Build/release -j3` (skips the ~11.5-min reconfigure).
+- S3 (2026-11-28): runner label fix + on-demand versioning.
+  - ROOT CAUSE of the stuck CI runs: `runs-on: ubuntu-24.04-arm64` is NOT a
+    valid GitHub-hosted label. The Linux ARM64 hosted runners are labelled
+    `ubuntu-24.04-arm` / `ubuntu-22.04-arm` (suffix `-arm`; `-arm64` is the
+    macOS convention). A label that matches no runner queues forever:
+    "Waiting to be picked up by runner". Fixed in both workflows (label is a
+    standard hosted pool: free + unlimited on public repos, 4 vCPU / 16G).
+  - On-demand versioning (no automatic pin drift, per project goal):
+    - `build-ladybird.yml`: `workflow_dispatch` input `ladybird_ref` builds
+      any branch/tag/full SHA WITHOUT moving the pin (resolve step runs early,
+      so a bad ref fails in a minute); artifact now named
+      `ladybird-Linux-ARM64-<sha>` (provenance for licensing).
+    - NEW `bump-ladybird.yml`: dispatch-only; resolves the ref in a throwaway
+      clone, `git update-index --cacheinfo 160000,<sha>,ladybird`, commits +
+      pushes to main -> auto-triggers the build. Concurrency-grouped so two
+      dispatches can't race the push.
+  - README: CI section now lists all three workflows; new
+    "Licensing & distribution" section (Ladybird is BSD-2-Clause, deps incl.
+    Qt6 LGPL ship in Ladybird's LICENSES.txt; keep provenance, unofficial
+    builds, source pointer when publishing further).
+  - Rolling `latest-arm64` GitHub release (binary + VERSION + sha256,
+    `gh release upload --clobber`; pinned builds only, so the release always
+    means "latest of the pinned version") + `scripts/update-ladybird.sh` for
+    laptops (stable URL .../releases/latest/download/Ladybird-Linux-ARM64).

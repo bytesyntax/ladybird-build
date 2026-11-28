@@ -1,0 +1,68 @@
+# Bump the pinned Ladybird submodule to a newer commit, on demand.
+#
+# The "get a newer version" path: run it from the Actions page (optionally
+# picking a branch/tag/full SHA), and it commits a new submodule pointer and
+# pushes it to main. The push then triggers build-ladybird.yml automatically,
+# so a fresh arm64 build follows right behind.
+#
+# The pin only moves when you ask (nothing is scheduled), an unwanted bump is
+# a normal `git revert`, and the job is pure git plumbing - any runner works,
+# no ARM needed.
+name: Bump Ladybird
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Ladybird branch/tag to pin, or a full 40-char commit SHA (default: master)"
+        required: false
+        default: master
+
+permissions:
+  contents: write
+
+# Never let two bumps race the push; the waiter then finds "already up to date".
+concurrency:
+  group: bump-ladybird
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # Resolve the requested ref to a commit in a throwaway clone (no
+      # submodule checkout needed - we only need the SHA).
+      - name: Resolve requested ref
+        id: resolve
+        env:
+          LB_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          TMP="$(mktemp -d)"
+          trap 'rm -rf "$TMP"' EXIT
+          git init -q "$TMP/lb"
+          git -C "$TMP/lb" fetch --quiet --depth 1 --no-tags \
+            "https://github.com/LadybirdBrowser/ladybird.git" "$LB_REF"
+          git -C "$TMP/lb" checkout --quiet --detach FETCH_HEAD
+          echo "sha=$(git -C "$TMP/lb" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Commit new submodule pointer
+        env:
+          NEW_SHA: ${{ steps.resolve.outputs.sha }}
+          LB_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          OLD="$(git ls-tree HEAD ladybird | awk '{print $3}')"
+          if [ "$OLD" = "$NEW_SHA" ]; then
+            echo "Submodule already pinned at ${NEW_SHA:0:12}; nothing to do."
+            exit 0
+          fi
+          # Update the gitlink in the index without checking the submodule out.
+          git update-index --cacheinfo 160000,"$NEW_SHA",ladybird
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "bump ladybird to ${NEW_SHA:0:12} (requested ref: ${LB_REF})"
+          git push origin HEAD:main

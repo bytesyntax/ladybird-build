@@ -6,19 +6,30 @@
 # installer scripts) and run the same build script. The result (the `Ladybird`
 # binary) is uploaded as an artifact.
 #
-# Runner: an ARM (aarch64) ubuntu runner. GitHub's public pool is x86_64, so
-# this targets the `-arm` runner variant; adjust `runs-on` to the exact ARM
-# label available in your account/org (see README "CI").
+# Runner: a GitHub-hosted ARM64 (aarch64) Ubuntu runner. GitHub's standard
+# ARM64 hosted pool is available on all repos and is free-minute eligible; the
+# label is `ubuntu-24.04-arm` (note: `-arm`, NOT `-arm64` — that suffix is the
+# macOS convention and does not exist for Linux).
 name: Build Ladybird
 
 on:
   workflow_dispatch:
+    # Build a specific Ladybird version on request WITHOUT moving the pin:
+    # a branch/tag name or a full 40-char commit SHA; empty = the pinned
+    # submodule commit (what pushes/PRs build).
+    inputs:
+      ladybird_ref:
+        description: "Ladybird branch/tag/commit to build (empty = pinned submodule commit)"
+        required: false
+        default: ""
   push:
     branches: [main, master]
   pull_request:
 
 permissions:
-  contents: read
+  # write is needed for the rolling latest-arm64 GitHub release (fork PRs
+  # still get a read-only token).
+  contents: write
 
 env:
   # Parallelism / memory guards (GH runners: ~4 cores / 16G). build-ladybird.sh
@@ -32,13 +43,34 @@ env:
 jobs:
   build:
     # aarch64 runner - produces an arm64 Ladybird binary.
-    runs-on: ubuntu-24.04-arm64
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 600
     steps:
       - name: Checkout (with submodules)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
+
+      # By default we build exactly the pinned submodule commit (reproducible
+      # builds). A workflow_dispatch may request a different Ladybird
+      # branch/tag/full SHA to try a newer version WITHOUT moving the pin:
+      # shallow-fetch it and check it out detached. Runs early so a bad ref
+      # fails in a minute, not after 30 of dependency installs. The resolved
+      # SHA tags the artifact (provenance; see README "Licensing &
+      # distribution").
+      - name: Resolve Ladybird commit
+        id: lb
+        env:
+          LB_REF: ${{ inputs.ladybird_ref }}
+        run: |
+          set -euo pipefail
+          if [ -n "$LB_REF" ]; then
+            git -C ladybird fetch --quiet --depth 1 --no-tags origin "$LB_REF"
+            git -C ladybird checkout --quiet --detach FETCH_HEAD
+          fi
+          echo "sha=$(git -C ladybird rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "sha_full=$(git -C ladybird rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Building Ladybird @ $(git -C ladybird rev-parse --short=12 HEAD) (requested ref: ${LB_REF:-<pinned submodule commit>})"
 
       # Base build dependencies + toolchain prerequisites. Mirrors the apt
       # layer of .devcontainer/Dockerfile so the toolchain matches the image.
@@ -99,6 +131,31 @@ jobs:
       - name: Upload Ladybird binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: ladybird-Linux-${{ runner.arch }}
+          name: ladybird-Linux-${{ runner.arch }}-${{ steps.lb.outputs.sha }}
           path: ladybird/Build/release/bin/Ladybird
           if-no-files-found: error
+
+      # Publish the Pinned build as the rolling `latest-arm64` GitHub release
+      # (stable URL: .../releases/latest/download/Ladybird-Linux-ARM64) so a
+      # laptop can update with scripts/update-ladybird.sh. Assets are replaced
+      # in place (--clobber). Only pinned builds publish here - never
+      # pull_request (fork tokens can't write anyway) and never an
+      # experimental ladybird_ref build, which would shadow the real "latest".
+      - name: Publish as GitHub release (rolling latest-arm64)
+        if: success() && github.event_name != 'pull_request' && inputs.ladybird_ref == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LB_SHA_FULL: ${{ steps.lb.outputs.sha_full }}
+        run: |
+          set -euo pipefail
+          TAG="latest-arm64"
+          STAGE="$(mktemp -d)"
+          cp ladybird/Build/release/bin/Ladybird "$STAGE/Ladybird-Linux-ARM64"
+          printf 'commit %s\nbuilt %s\n' "$LB_SHA_FULL" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STAGE/VERSION"
+          ( cd "$STAGE" && sha256sum Ladybird-Linux-ARM64 > Ladybird-Linux-ARM64.sha256 )
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --title "Latest arm64 build (rolling)" \
+                 --notes "Unofficial arm64 build of Ladybird - see README 'Licensing & distribution'."
+          gh release upload "$TAG" "$STAGE/Ladybird-Linux-ARM64" "$STAGE/VERSION" \
+            "$STAGE/Ladybird-Linux-ARM64.sha256" --clobber
+          gh release edit "$TAG" --notes "Unofficial arm64 build of Ladybird @ \`${LB_SHA_FULL:0:12}\` (built $(date -u +%Y-%m-%dT%H:%M:%SZ)). See README 'Licensing & distribution'."

@@ -6,9 +6,9 @@
 # known-good image can be pulled instead of rebuilt from scratch. This is the
 # GitHub half of the 3-layer rebuild-trigger system (see README.md).
 #
-# Runner: an ARM (aarch64) runner, so the published image is aarch64 (matching
-# the local dev machines). Adjust `runs-on` to the exact ARM label available in
-# your account/org (see README "CI").
+# Runner: a GitHub-hosted ARM64 (aarch64) runner, so the published image is
+# aarch64 (matching the local dev machines). Label: `ubuntu-24.04-arm` (a
+# standard GitHub-hosted ARM64 runner; note `-arm`, NOT `-arm64`).
 name: Build Dev Container Image
 
 on:
@@ -32,7 +32,7 @@ env:
 jobs:
   build-and-publish:
     # aarch64 runner - builds an arm64 image natively (no qemu emulation).
-    runs-on: ubuntu-24.04-arm64
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     steps:
       - name: Checkout

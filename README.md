@@ -82,6 +82,14 @@ Manual rebuild commands:
 
 ## Bumping Ladybird
 
+Or, without touching a local clone: run the **Bump Ladybird** workflow from
+the Actions page — pick a branch/tag/full SHA (default `master`), it commits
+the new submodule pointer to `main`, and the push auto-triggers a fresh
+`build-ladybird` run. The pin only moves on request; an unwanted bump is a
+normal `git revert`.
+
+Manually (local):
+
 ```bash
 git -C ladybird fetch origin master
 git -C ladybird checkout master
@@ -90,22 +98,74 @@ git add ladybird && git commit -m "bump ladybird to $(git -C ladybird rev-parse 
 
 ## CI (GitHub Actions)
 
-Two workflows in `.github/workflows/`:
+Three workflows in `.github/workflows/`:
 
 - **`build-ladybird.yml`** — builds Ladybird **directly on an arm64 runner**
   (no container: the dev image exists to isolate the *local* machine, so on a
   clean runner we just install the same toolchain and run the build). Uploads
-  the `Ladybird` binary as an artifact. Runs on push to `main`, on PRs, and on
-  manual dispatch.
+  the `Ladybird` binary as an artifact named with the exact commit it was
+  built from (`ladybird-Linux-ARM64-<sha>`). Runs on push to `main`, on PRs,
+  and on manual dispatch — the dispatch form takes an optional **Ladybird
+  branch/tag/commit**, so you can build a newer version *without* moving the
+  pinned submodule.
+- **`bump-ladybird.yml`** — **moves the pin, on demand only**: picks a
+  branch/tag/full SHA from upstream, commits the new submodule pointer and
+  pushes it to `main`, which auto-triggers `build-ladybird`. The version never
+  moves by itself, and an unwanted bump is a normal `git revert`.
 - **`devcontainer.yml`** — builds the **arm64 dev image** and pushes it to GHCR
   (`ghcr.io/<owner>/ladybird-build`, tags `latest` + `sha-<recipe-hash>`). Runs
   on pushes touching `.devcontainer/**`, weekly, and on manual dispatch.
 
-Both target an **ARM (aarch64) runner** — `runs-on: ubuntu-24.04-arm64` — since
-the local machines are arm64 and the public GitHub pool is x86_64. If your ARM
-runner label differs, change `runs-on:` in both files. `build-ladybird.yml`
-caches the vcpkg binary cache + ccache between runs; the first (cold) build is
-slow because Qt 6.11 is compiled from source.
+`build-ladybird.yml` and `devcontainer.yml` target a **GitHub-hosted ARM64
+(aarch64) runner** — `runs-on: ubuntu-24.04-arm` — since the local machines
+are arm64. This is a standard GitHub-hosted ARM64 pool: available on all repos
+and free-minute eligible (the label is `ubuntu-24.04-arm`, i.e. `-arm`,
+**not** `-arm64`). `bump-ladybird.yml` is pure git plumbing and runs on any
+runner. `build-ladybird.yml` caches the vcpkg binary cache + ccache between
+runs; the first (cold) build is slow because Qt 6.11 is compiled from source.
+
+Every successful **pinned** build is also published as the rolling
+**`latest-arm64`** GitHub release (binary + `VERSION` + sha256, replaced in
+place), which gives a stable download URL. Experimental dispatch builds
+(with `ladybird_ref` set) are NOT published as releases — only as run
+artifacts — so the release always means "latest build of the pinned
+version".
+
+### Updating from a laptop
+
+```bash
+scripts/update-ladybird.sh                   # installs to ~/.local/bin/Ladybird
+scripts/update-ladybird.sh /opt/lb/Ladybird  # or anywhere else
+```
+
+The script downloads the latest release asset, verifies its published sha256,
+installs it, and prints the Ladybird commit the binary was built from. By
+hand, the stable URL is
+`https://github.com/bytesyntax/ladybird-build/releases/latest/download/Ladybird-Linux-ARM64`.
+
+## Licensing & distribution
+
+Ladybird is **BSD-2-Clause** (its `LICENSE` file) — permissive enough to
+build, keep, and even share the binaries; the only hard rule is keeping the
+copyright/license notices with the software. The third-party dependencies
+vcpkg pulls in (Qt6 is LGPL/commercial dual-licensed, etc.) ship their own
+notices in Ladybird's `LICENSES.txt`, and upstream already publishes prebuilt
+binaries under those same terms — this project only builds unmodified
+upstream source, so it adds no new licensing surface.
+
+Rules this project follows, so sharing builds stays clean:
+
+- **Provenance**: every CI artifact is named with the exact Ladybird commit
+  it came from (`ladybird-Linux-ARM64-<sha>`), and `main` pins a submodule
+  commit — any binary is always reproducible from public source, which is
+  also what the license expects of a distribution.
+- **Unofficial**: the artifacts are personal/unofficial builds, not an
+  official Ladybird release — the name and logo stay with the Ladybird
+  project.
+- **Publishing further** (release, package repo, ...): allowed by the
+  license, but keep the source pointer (`LadybirdBrowser/ladybird` @ `<sha>`)
+  wherever the binary goes — the rolling `latest-arm64` release does exactly
+  this in its notes and `VERSION` asset.
 
 ## Resources
 
