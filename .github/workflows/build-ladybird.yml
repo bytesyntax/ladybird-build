@@ -156,6 +156,8 @@ jobs:
           gh release view "$TAG" >/dev/null 2>&1 \
             || gh release create "$TAG" --title "Latest arm64 build (rolling)" \
                  --notes "Unofficial arm64 build of Ladybird - see README 'Licensing & distribution'."
+          # LICENCE.md ships with the release: BSD-2 clause 2 requires the
+          # full licence text to accompany binary distributions.
           gh release upload "$TAG" "$STAGE/Ladybird-Linux-ARM64" "$STAGE/VERSION" \
-            "$STAGE/Ladybird-Linux-ARM64.sha256" --clobber
+            "$STAGE/Ladybird-Linux-ARM64.sha256" LICENCE.md --clobber
           gh release edit "$TAG" --notes "Unofficial arm64 build of Ladybird @ \`${LB_SHA_FULL:0:12}\` (built $(date -u +%Y-%m-%dT%H:%M:%SZ)). See README 'Licensing & distribution'."

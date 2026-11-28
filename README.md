@@ -145,13 +145,14 @@ hand, the stable URL is
 
 ## Licensing & distribution
 
-Ladybird is **BSD-2-Clause** (its `LICENSE` file) — permissive enough to
-build, keep, and even share the binaries; the only hard rule is keeping the
-copyright/license notices with the software. The third-party dependencies
-vcpkg pulls in (Qt6 is LGPL/commercial dual-licensed, etc.) ship their own
-notices in Ladybird's `LICENSES.txt`, and upstream already publishes prebuilt
-binaries under those same terms — this project only builds unmodified
-upstream source, so it adds no new licensing surface.
+Ladybird is **BSD-2-Clause** — permissive enough to build, keep, and even
+share the binaries; the only hard rule is that the copyright notice and full
+licence text ship with any binary distribution. Full texts for **both**
+licences (this repo's tooling, and Ladybird for the builds we publish) live
+in [LICENCE.md](LICENCE.md), which the `latest-arm64` release uploads as an
+asset alongside every binary — a pointer alone is not a substitute under
+BSD-2 clause 2. Third-party deps (Qt6 is LGPL/commercial dual-licensed,
+etc.) ship their notices in Ladybird's `LICENSES.txt`.
 
 Rules this project follows, so sharing builds stays clean:
 

@@ -296,3 +296,10 @@ Create (repo currently has none):
     `gh release upload --clobber`; pinned builds only, so the release always
     means "latest of the pinned version") + `scripts/update-ladybird.sh` for
     laptops (stable URL .../releases/latest/download/Ladybird-Linux-ARM64).
+  - LICENCE.md: full BSD-2 texts for (a) this repo's tooling (Ola Törnquist)
+    and (b) Ladybird verbatim (required to accompany the binary releases per
+    BSD-2 clause 2); uploaded as a release asset; README section trimmed to
+    rules + pointer. NOTE: push-to-main is UNFILTERED (any push builds) - a
+    doc-only push costs one warm build. Adding a `paths:` filter is deferred:
+    it must first be verified that path filtering catches submodule-pointer
+    (gitlink) changes, or the bump->build flow would silently not trigger.
